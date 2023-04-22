@@ -4,7 +4,6 @@
 )]
 
 #[allow(dead_code)]
-
 use std::{error::Error, sync::Mutex};
 
 use stockfish::StockfishEval;
