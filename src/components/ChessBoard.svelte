@@ -4,6 +4,8 @@
     import PieceComponent from "./board/PieceComponent.svelte";
     import EvalBar from "./board/EvalBar.svelte";
     import { onMount } from "svelte";
+    import { Stockfish } from "../lib/stockfish";
+    import type { StockfishEval } from "../lib/stockfish";
 
     export let fen: string = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -41,7 +43,6 @@
          * Returns the legal moves from the given square as an array of destination squares.
          */
         getLegalMovesFromSquare(index: number): string[] {
-            console.log(this._chess.moves({ verbose: true }), boardIndexToSquare(index));
             return this._chess
                 .moves({ square: boardIndexToSquare(index), verbose: true })
                 .map((move) => move.to);
@@ -62,6 +63,8 @@
             this._chess.move({ from: fromSquare, to: toSquare, promotion: "q" });
 
             fen = this._chess.fen();
+
+            stockfish.start_evaluation(fen);
 
             shownLegalMoves = [];
         }
@@ -174,73 +177,156 @@
         let squareX = Math.floor((x - left) / squareSize);
         let squareY = Math.floor((y - top) / squareSize);
 
+        if (flipped) {
+            squareX = 7 - squareX;
+            squareY = 7 - squareY;
+        }
+        
         return squareY * 8 + squareX;
     }
 
-    
+    function makeEvalStatusText(sfEval: StockfishEval): string {
+        if (sfEval.continuations.length === 0) {
+            return "No evaluation";
+        }
+
+        let score = sfEval.continuations[0].score;
+
+        if (score["CentipawnAdvantage"]) {
+            let cpa = score["CentipawnAdvantage"];
+            return `${cpa > 0 ? "+" : ""}${(cpa / 100).toFixed(2)}`;
+        } else if (score["Mate"]) {
+            if (score["Mate"] > 0) {
+                return `Mate in ${score["Mate"]}`;
+            } else {
+                return `Mate in ${-score["Mate"]}`;
+            }
+        }
+    }
+
+    let evalBarValue = 0.5;
+
+    let stockfish = new Stockfish();
+    let currentEval: StockfishEval | null = null;
+
+    stockfish.start_evaluation(fen);
+
+    setInterval(() => {
+        stockfish.get_evaluation().then((stockfishEval) => {
+            currentEval = stockfishEval;
+            let score = stockfishEval.continuations[0].score;
+
+            if (score["CentipawnAdvantage"]) {
+                let cpa = score["CentipawnAdvantage"];
+                let magnitude = cpa;
+                let offset = Math.sqrt(Math.abs(magnitude)) / 80;
+
+                evalBarValue = cpa > 0 ? 0.5 + offset : 0.5 - offset;
+            } else if (score["Mate"]) {
+                if (score["Mate"] > 0) {
+                    evalBarValue = 1;
+                } else {
+                    evalBarValue = 0;
+                }
+            }
+        });
+    }, 500);
 </script>
 
-<div class="board-container">
-    <div class="board">
-        <div class="squares" bind:this={squareContainerElt}>
-            {#each visualBoardIndices as square}
-                <div
-                    class="square"
-                    class:light={isLightSquare(square)}
-                    class:dark={!isLightSquare(square)}
-                    data-index={square}
-                >
-                    {#if squareRowAnnotation(square)}
-                        <div
-                            class="square-annotation square-row-annotation"
-                            class:flipped
-                            class:normal={!flipped}
-                        >
-                            {squareRowAnnotation(square)}
-                        </div>
-                    {/if}
-                    {#if squareColumnAnnotation(square)}
-                        <div
-                            class="square-annotation square-column-annotation"
-                            class:flipped
-                            class:normal={!flipped}
-                        >
-                            {squareColumnAnnotation(square)}
-                        </div>
-                    {/if}
-                    {#if shownLegalMoves.includes(square)}
-                        <div class="legal-move-overlay">
+<div class="main">
+    <span class="board-container">
+        <div class="board">
+            <div class="squares" bind:this={squareContainerElt}>
+                {#each visualBoardIndices as square}
+                    <div
+                        class="square"
+                        class:light={isLightSquare(square)}
+                        class:dark={!isLightSquare(square)}
+                        data-index={square}
+                    >
+                        {#if squareRowAnnotation(square)}
                             <div
-                                class="legal-move-overlay-circle"
-                                class:capturing={board.getPieceAtIndex(square) !== null}
-                            />
-                        </div>
-                    {/if}
-                    <PieceComponent
-                        piece={board.getPieceAtIndex(square)}
-                        index={square}
-                        highlightLegalMoves={board.highlightLegalMoves.bind(board)}
-                        clearHighlightedLegalMoves={() => (shownLegalMoves = [])}
-                        requestMove={board.requestMove.bind(board)}
-                        canGrabPiece={() => {
-                            return board.getPieceAtIndex(square)?.color === board.getTurn();
-                        }}
-                        pieceExistsAt={(index) => board.getPieceAtIndex(index) !== null}
-                    />
-                </div>
-            {/each}
+                                class="square-annotation square-row-annotation"
+                                class:flipped
+                                class:normal={!flipped}
+                            >
+                                {squareRowAnnotation(square)}
+                            </div>
+                        {/if}
+                        {#if squareColumnAnnotation(square)}
+                            <div
+                                class="square-annotation square-column-annotation"
+                                class:flipped
+                                class:normal={!flipped}
+                            >
+                                {squareColumnAnnotation(square)}
+                            </div>
+                        {/if}
+                        {#if shownLegalMoves.includes(square)}
+                            <div class="legal-move-overlay">
+                                <div
+                                    class="legal-move-overlay-circle"
+                                    class:capturing={board.getPieceAtIndex(square) !== null}
+                                />
+                            </div>
+                        {/if}
+                        <PieceComponent
+                            piece={board.getPieceAtIndex(square)}
+                            index={square}
+                            highlightLegalMoves={board.highlightLegalMoves.bind(board)}
+                            clearHighlightedLegalMoves={() => (shownLegalMoves = [])}
+                            requestMove={board.requestMove.bind(board)}
+                            canGrabPiece={() => {
+                                return board.getPieceAtIndex(square)?.color === board.getTurn();
+                            }}
+                            pieceExistsAt={(index) => board.getPieceAtIndex(index) !== null}
+                        />
+                    </div>
+                {/each}
+            </div>
         </div>
+        <EvalBar value={evalBarValue} />
+    </span>
+    <div class="footer">
+        <span>
+            <button on:click={() => (flipped = !flipped)}>↺</button>
+        </span>
+        <span>
+            {#if currentEval}
+                <div class="sf-stats">
+                    {makeEvalStatusText(currentEval)}
+                </div>
+            {/if}
+        </span>
     </div>
-    <EvalBar value={0.5} />
 </div>
 
 <style>
-    .board-container {
+    .main {
         width: 100%;
+    }
 
+    .board-container {
         display: grid;
 
         grid-template-columns: 1fr 20px;
+    }
+
+    .footer {
+        display: flex;
+
+        justify-content: space-between;
+        align-items: center;
+
+        opacity: 0.8;
+    }
+
+    .sf-stats {
+        font-size: 0.8em;
+        opacity: 0.8;
+        text-align: right;
+
+        font-weight: bold;
     }
 
     .board {
