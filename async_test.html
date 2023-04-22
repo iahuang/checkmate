@@ -1,0 +1,22 @@
+<html>
+    <script>
+        async function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        async function count(source) {
+            for (let i = 0; i < 10; i++) {
+                await sleep(1000 + Math.random() * 10);
+                console.log(source, i);
+            }
+        }
+
+        async function main() {
+            count('A');
+            count('B');
+        }
+
+        main();
+        
+    </script>
+</html>
