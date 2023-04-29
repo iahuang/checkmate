@@ -2,6 +2,8 @@
 
 A desktop app which implements [chess.com](https://www.chess.com/)'s Game Review feature.
 
+![Screenshot](https://github.com/iahuang/checkmate/raw/main/public/github_assets/application.png)
+
 Requires a local installation of [Stockfish](https://stockfishchess.org/) to function.
 
 ## Credits
