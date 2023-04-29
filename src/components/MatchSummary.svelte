@@ -130,12 +130,23 @@
         {#each range(0, getDisplayedTimeline(timelineState).length / 2) as i}
             <div class="move-row">
                 {#each [i * 2 + 1, i * 2 + 2] as j}
-                    <div class="move" class:selected={isMoveNoSelected(timelineState, j)}>
+                    <div
+                        class="move"
+                        class:selected={isMoveNoSelected(timelineState, j)}
+                        on:click={() => {
+                            if (j >= timelineState.main.length) {
+                                return;
+                            }
+
+                            chessInterface.setMoveIndex(j);
+                        }}
+                        role="presentation"
+                    >
                         <span>
                             <span class="move-no">{j}.</span>
-                            <span class="move-san"
-                                >{displayMove(getNthMoveInTimeline(timelineState, j))}</span
-                            >
+                            <span class="move-san">
+                                {displayMove(getNthMoveInTimeline(timelineState, j))}
+                            </span>
                         </span>
                         {#if annotations.getAnnotationAt(j)}
                             <span class="annotation">
@@ -213,6 +224,13 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
+
+        cursor: pointer;
+    }
+
+    .move:hover {
+        background-color: #ffffff11;
+        border-radius: 0.5rem;
     }
 
     .move.selected {

@@ -147,6 +147,17 @@ export class ChessInterface {
         return newPosition;
     }
 
+    setMoveIndex(index: number): TimelinePosition {
+        let lastPosition = this._timeline.getPosition();
+        let newPosition = this._timeline.setMoveIndex(index);
+
+        if (!positionsEqual(newPosition, lastPosition)) {
+            this._updateStores();
+        }
+
+        return newPosition;
+    }
+
     loadPGN(pgn: string) {
         this._matchMetadata = this._timeline.loadPGN(pgn);
         this._updateStores();

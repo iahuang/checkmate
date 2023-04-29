@@ -232,6 +232,20 @@ export class BoardTimeline {
     }
 
     /**
+     * Set the current position to the given index on the `main` timeline.
+     * 
+     * This clears the `hypothetical` timeline.
+     */
+    setMoveIndex(index: number): TimelinePosition {
+        this._position.index = index;
+        this._position.main = true;
+
+        this._hypothetical = [];
+
+        return { ...this._position };
+    }
+
+    /**
      * Make a move on the board.
      *
      * If we are on the `main` timeline, then we will fork the timeline and
