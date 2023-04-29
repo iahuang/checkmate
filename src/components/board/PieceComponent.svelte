@@ -3,7 +3,7 @@
     import { onMount } from "svelte";
 
     export let piece: Piece | null = null;
-    export let index;
+    export let index: number;
 
     export let highlightLegalMoves: (index: number) => void;
     export let clearHighlightedLegalMoves: () => void;
@@ -13,8 +13,8 @@
 
     let dragStartX: number | null = null;
     let dragStartY: number | null = null;
-    let mouseX: number | null = null;
-    let mouseY: number | null = null;
+    let mouseX = 0;
+    let mouseY = 0;
 
     $: dragging = dragStartX !== null && dragStartY !== null;
 
@@ -66,8 +66,8 @@
             src={`/resources/assets/pieces/${piece.color}${piece.type}.svg`}
             alt=""
             class="piece-img ghost"
-            style:left={mouseX - dragStartX + "px"}
-            style:top={mouseY - dragStartY + "px"}
+            style:left={mouseX - (dragStartX ?? 0) + "px"}
+            style:top={mouseY - (dragStartY ?? 0) + "px"}
         />
     {/if}
 </div>

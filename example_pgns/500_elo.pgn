@@ -1,0 +1,17 @@
+[Event "Live Chess - chess"]
+[Site "Chess.com"]
+[Date "2023.04.23"]
+[Round "?"]
+[White "oldpepper12"]
+[Black "abyanba"]
+[Result "1-0"]
+[TimeControl "180+2"]
+[WhiteElo "565"]
+[BlackElo "549"]
+[Termination "oldpepper12 won by checkmate"]
+
+1. e4 c6 2. Nc3 d5 3. exd5 cxd5 4. d4 Nf6 5. Nf3 Nc6 6. Bd3 g6 7. Nxd5 Nxd5 8.
+Bg5 Bg7 9. O-O f6 10. Bf4 e5 11. Be3 exd4 12. Bxd4 Nxd4 13. Qe1+ Ne6 14. Bb5+
+Bd7 15. c4 Bxb5 16. Qxe6+ Ne7 17. Rad1 Qc8 18. Qxc8+ Rxc8 19. cxb5 O-O 20. Rfe1
+Nf5 21. g4 Nh6 22. Rd7 Nxg4 23. Ree7 Rc1+ 24. Kg2 f5 25. Rxg7+ Kh8 26. Rxh7+ Kg8
+27. Rdg7# 1-0

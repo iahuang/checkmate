@@ -32,4 +32,17 @@ export function abbreviateLargeNumber(n: number): string {
     if (n < 1000000000000) {
         return Math.round(n / 1000000000) + "bil";
     }
+
+    return n.toLocaleString();
+}
+
+/**
+ * Return a range of numbers from start (inclusive) to end (exclusive).
+ */
+export function range(start: number, end: number): number[] {
+    let result: number[] = [];
+    for (let i = start; i < end; i++) {
+        result.push(i);
+    }
+    return result;
 }

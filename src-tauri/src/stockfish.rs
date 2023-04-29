@@ -109,7 +109,7 @@ impl EvaluationScore {
     }
 
     /// Values returned by Stockfish are always relative to the side to move.
-    /// 
+    ///
     /// This function converts the score to be absolute, given the relative side to move.
     pub fn make_absolute(mut self, relative_to: chess::Color) -> Self {
         match self {
@@ -146,55 +146,48 @@ struct SFEvalInfo {
 impl SFEvalInfo {
     /// Parse a line of Stockfish output into an `SFEvalInfo` struct.
     pub fn parse(line: &str) -> Option<Self> {
-        let depth_re = Regex::new(r"info depth (\d+)").unwrap();
-        let continuation_re = Regex::new(r"pv (([a-z]\w+ ?)+)$").unwrap();
-        let score_re = Regex::new(r"score (cp|mate) (-?\d+)").unwrap();
-        let n_nodes_re = Regex::new(r"nodes (\d+)").unwrap();
-        let multipv_re = Regex::new(r"multipv (\d+)").unwrap();
-
-        // parse depth
-        let depth = depth_re.captures(line)?.get(1)?.as_str().parse().ok()?;
-
-        // parse continuation
+        let parts = line.split(" ").collect::<Vec<_>>();
+        let mut depth = 0;
         let mut continuation = vec![];
-        if let Some(continuation_match) = continuation_re.captures(line) {
-            let mut iter = continuation_match.iter();
-            iter.next();
+        let mut score: Option<EvaluationScore> = None;
+        let mut n_nodes = 0;
+        let mut multipv = 0;
 
-            // most readable functional programming code
-            continuation = iter
-                .next()
-                .unwrap()
-                .unwrap()
-                .as_str()
-                .split(" ")
-                .map(|x| x.to_owned())
-                .collect()
+        for (i, part) in parts.iter().enumerate() {
+            match *part {
+                "info" => {}
+                "depth" => {
+                    depth = usize::from_str(parts[i + 1]).ok()?;
+                }
+                "multipv" => {
+                    multipv = usize::from_str(parts[i + 1]).ok()?;
+                }
+                "score" => {
+                    let score_str = parts[i + 1];
+                    score = if score_str == "mate" {
+                        Some(EvaluationScore::Mate(i32::from_str(parts[i + 2]).ok()?))
+                    } else {
+                        Some(EvaluationScore::CentipawnAdvantage(
+                            i32::from_str(parts[i + 2]).ok()?,
+                        ))
+                    };
+                }
+                "nodes" => {
+                    n_nodes = usize::from_str(parts[i + 1]).ok()?;
+                }
+                "pv" => {
+                    continuation = parts[i + 1..].iter().map(|s| s.to_string()).collect();
+                }
+                _ => {}
+            }
         }
 
-        // parse score
-        let score = {
-            let score_match = score_re.captures(line)?;
-
-            let score_type = score_match.get(1)?.as_str();
-            let score_value = score_match.get(2)?.as_str().parse().ok()?;
-
-            if score_type == "cp" {
-                EvaluationScore::CentipawnAdvantage(score_value)
-            } else {
-                EvaluationScore::Mate(score_value)
-            }
-        };
-
-        let n_nodes = n_nodes_re.captures(line)?.get(1)?.as_str().parse().ok()?;
-        let multipv = multipv_re.captures(line)?.get(1)?.as_str().parse().ok()?;
-
-        Some(SFEvalInfo {
+        Some(Self {
             depth,
-            continuation: continuation,
-            score: score,
-            n_nodes: n_nodes,
-            multipv: multipv,
+            continuation,
+            score: score?,
+            n_nodes,
+            multipv,
         })
     }
 }
@@ -224,7 +217,7 @@ impl SFEvalOutputAccumulator {
         }
     }
 
-    pub fn process_lines(&mut self, lines: Vec<String>) {
+    pub fn process_lines(&mut self, lines: &[String]) {
         for line in lines.iter() {
             self.process_line(line);
         }
@@ -270,7 +263,7 @@ impl SFEvalOutputAccumulator {
 }
 
 #[derive(Debug, Error)]
-enum StockfishError {
+pub enum StockfishError {
     #[error("Invalid input to Stockfish.")]
     InvalidInput,
 
@@ -290,22 +283,37 @@ pub struct Stockfish {
     current_position: Option<chess::Board>,
 }
 
-type DynError = Box<dyn Error>;
-
 impl Stockfish {
-    pub fn new<P: AsRef<path::Path>>(path: P) -> Result<Self, DynError> {
+    pub fn new<P: AsRef<path::Path>>(path: P) -> Self {
         let (rx, tx) = Stockfish::spawn_stockfish_process(path);
 
-        Ok(Self {
+        Self {
             rx,
             tx,
             busy: false,
             accumulator: SFEvalOutputAccumulator::new(),
             current_position: None,
-        })
+        }
     }
 
-    fn stop_evaluation(&mut self) {
+    /// Configure the Stockfish process to use the given number of threads, as set
+    /// automatically by examining the number of cores on the system.
+    ///
+    /// Returns the number of cores that were found.
+    pub fn auto_set_n_threads(&mut self) -> usize {
+        let n_cores = num_cpus::get();
+        self.set_n_threads(n_cores);
+
+        n_cores
+    }
+
+    pub fn set_n_threads(&mut self, n_cores: usize) {
+        self.sf_proc_stdin_writeln(&format!("setoption name Threads value {}", n_cores));
+    }
+
+    /// Stop the current evaluation, if any, and wait until the process is ready to
+    /// receive new commands.
+    pub fn stop_evaluation(&mut self) {
         self.sf_proc_stdin_writeln("stop");
         self.wait_until_ready();
         self.set_not_busy();
@@ -313,7 +321,7 @@ impl Stockfish {
         self.accumulator.clear();
     }
 
-    fn assert_not_busy(&self) -> Result<(), DynError> {
+    fn assert_not_busy(&self) -> Result<(), StockfishError> {
         if self.busy {
             Err(StockfishError::Busy.into())
         } else {
@@ -333,7 +341,7 @@ impl Stockfish {
     ///
     /// # Errors
     /// Will return an error if an evaluation is already running.
-    pub fn restart_evaluation(&mut self, position_fen: &str) -> Result<(), DynError> {
+    pub fn restart_evaluation(&mut self, position_fen: &str) -> Result<(), StockfishError> {
         if self.busy {
             self.stop_evaluation()
         }
@@ -349,18 +357,23 @@ impl Stockfish {
         Ok(())
     }
 
-    pub fn get_current_evaluation(&mut self) -> Result<Option<StockfishEval>, DynError> {
+    /// Get the current evaluation of the current board position.
+    ///
+    /// # Errors
+    /// Will return an error if no evaluation is running.
+    pub fn get_current_evaluation(&mut self) -> Result<Option<StockfishEval>, StockfishError> {
         if !self.busy {
             return Err(StockfishError::NotEvaluating.into());
         }
 
         let lines = self.sf_proc_stdout_readlines();
-        self.accumulator.process_lines(lines);
+
+        self.accumulator.process_lines(&lines);
 
         let board = self
             .current_position
             .as_ref()
-            .ok_or(StockfishError::NotEvaluating)?;
+            .ok_or(StockfishError::InvalidInput)?;
 
         let curr_turn = board.side_to_move();
 
@@ -374,10 +387,22 @@ impl Stockfish {
             },
         };
 
-        Ok(self.accumulator.derive_evaluation(curr_turn, outcome))
+        match outcome {
+            Some(outcome) => {
+                self.stop_evaluation();
+                Ok(Some(StockfishEval {
+                    eval_depth: 0,
+                    n_nodes: 0,
+                    continuations: vec![],
+                    outcome: Some(outcome),
+                }))
+            }
+            None => Ok(self.accumulator.derive_evaluation(curr_turn, outcome)),
+        }
     }
 
-    fn set_position(&mut self, board_fen: &str) -> Result<(), DynError> {
+    /// Set the current board position.
+    fn set_position(&mut self, board_fen: &str) -> Result<(), StockfishError> {
         self.sf_proc_stdin_writeln(format!("position fen {}", board_fen));
 
         let board = match chess::Board::from_str(board_fen).ok() {
@@ -416,7 +441,7 @@ impl Stockfish {
     }
 
     /// Non-blocking. Read a line from Stockfish's stdout, if available.
-    /// 
+    ///
     /// Returns `None` if no line is available.
     fn sf_proc_stdout_readline(&mut self) -> Option<String> {
         if let Ok(line) = self.rx.try_recv() {
@@ -427,7 +452,7 @@ impl Stockfish {
     }
 
     /// Non-blocking. Read all available lines from Stockfish's stdout.
-    /// 
+    ///
     /// Return an empty vector if no lines are available.
     fn sf_proc_stdout_readlines(&mut self) -> Vec<String> {
         let mut out = vec![];
@@ -444,7 +469,7 @@ impl Stockfish {
     fn spawn_stockfish_process<P: AsRef<path::Path>>(
         path: P,
     ) -> (mpsc::Receiver<String>, mpsc::Sender<String>) {
-        const STDIN_THREAD_RX_INTERVAL: u64 = 50;
+        const STDIN_THREAD_RX_INTERVAL: u64 = 10;
 
         let (tx_stdout, rx_stdout) = mpsc::channel::<String>();
         let (tx_stdin, rx_stdin) = mpsc::channel::<String>();

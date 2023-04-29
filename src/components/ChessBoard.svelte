@@ -1,332 +1,216 @@
 <script lang="ts">
-    import { Chess } from "chess.js";
-    import type { Piece, Square, PieceSymbol, Color } from "chess.js";
     import PieceComponent from "./board/PieceComponent.svelte";
-    import EvalBar from "./board/EvalBar.svelte";
-    import { onMount } from "svelte";
-    import { Stockfish } from "../lib/stockfish";
-    import type { StockfishEval } from "../lib/stockfish";
+    import { onDestroy } from "svelte";
 
-    export let fen: string = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    import { boardIndexToSquare, squareToBoardIndex, type BoardState } from "../lib/chess/board";
+    import type { ChessInterface, TimelineState } from "../lib/chess/chess_interface";
+    import type { TimelineAnnotations } from "../lib/chess/game_review";
+    import { pathForMoveFeedbackIcon } from "../lib/ui/assets";
 
-    let flipped = false;
+    export let chessInterface: ChessInterface;
 
-    $: board = new ChessBoard(fen);
-
-    let shownLegalMoves: number[] = [];
-
-    let squareContainerElt: HTMLDivElement | null = null;
-
-    /**
-     * Chess board interface.
-     */
-    export class ChessBoard {
-        private _chess: Chess;
-        private _board: Board;
-
-        constructor(fen: string) {
-            this._chess = new Chess(fen);
-            this._board = this._chess.board();
-        }
-
-        getTurn(): Color {
-            return this._chess.turn();
-        }
-
-        getPieceAtIndex(index: number): Piece | null {
-            let { row, column } = getCoordsFromIndex(index);
-
-            return this._board[row][column];
-        }
-
-        /**
-         * Returns the legal moves from the given square as an array of destination squares.
-         */
-        getLegalMovesFromSquare(index: number): string[] {
-            return this._chess
-                .moves({ square: boardIndexToSquare(index), verbose: true })
-                .map((move) => move.to);
-        }
-
-        highlightLegalMoves(atIndex: number) {
-            let legalMoves = this.getLegalMovesFromSquare(atIndex);
-
-            shownLegalMoves = legalMoves.map((destination) => squareToBoardIndex(destination));
-        }
-
-        requestMove(from: number, toX: number, toY: number) {
-            let to = getIndexAtScreenCoords(toX, toY);
-
-            let fromSquare = boardIndexToSquare(from);
-            let toSquare = boardIndexToSquare(to);
-
-            this._chess.move({ from: fromSquare, to: toSquare, promotion: "q" });
-
-            fen = this._chess.fen();
-
-            stockfish.start_evaluation(fen);
-
-            shownLegalMoves = [];
-        }
-    }
-
-    type Board = (Piece | null)[][];
-
-    // add squares to the board
-    $: visualBoardIndices = generateBoardIndices(flipped);
-
-    /**
-     * Generates an array of indices for the board. If flipped is true, the array will be reversed.
-     */
-    function generateBoardIndices(flipped: boolean): number[] {
-        let squares: number[] = [];
-
+    function makeSquareIndexList(flipped: boolean): number[] {
+        let indices: number[] = [];
         for (let i = 0; i < 64; i++) {
-            squares.push(i);
+            indices.push(flipped ? 63 - i : i);
         }
-
-        if (flipped) {
-            squares.reverse();
-        }
-
-        return squares;
+        return indices;
     }
 
-    /**
-     * Returns the row and column of the square at the given index.
-     */
-    function getCoordsFromIndex(index: number): { row: number; column: number } {
-        let row = Math.floor(index / 8);
-        let column = index % 8;
-
-        return { row, column };
-    }
-
-    /**
-     * Returns whether the square at the given index is a light square.
-     */
     function isLightSquare(index: number): boolean {
-        let { row, column } = getCoordsFromIndex(index);
-
-        return (row + column) % 2 === 0;
+        return (index % 8) % 2 === Math.floor(index / 8) % 2;
     }
 
-    /**
-     * Parses a UCI string into a from and to square.
-     */
-    function parseUCI(uci: string): { from: Square; to: Square } {
+    function indexAsRowCol(index: number): { row: number; col: number } {
         return {
-            from: uci.slice(0, 2) as Square,
-            to: uci.slice(2, 4) as Square,
+            row: Math.floor(index / 8),
+            col: index % 8,
         };
     }
 
-    /**
-     * Return the square at the given index.
-     */
-    function boardIndexToSquare(index: number): Square {
-        let { row, column } = getCoordsFromIndex(index);
-
-        return (String.fromCharCode(97 + column) + String.fromCharCode(56 - row)) as Square;
-    }
-
-    /**
-     * Return the index of the given square.
-     */
-    function squareToBoardIndex(square: string): number {
-        let column = square.charCodeAt(0) - 97;
-        let row = 56 - square.charCodeAt(1);
-
-        return row * 8 + column;
-    }
-
-    /**
-     * Return the row annotation for the square at the given index.
-     */
     function squareRowAnnotation(index: number): string | null {
-        let { row, column } = getCoordsFromIndex(index);
+        let { row, col } = indexAsRowCol(index);
 
-        if (column === 0) {
-            return String.fromCharCode(56 - row);
+        if (col === 0) {
+            return (7 - row + 1).toString();
+        } else {
+            return null;
         }
-
-        return null;
     }
 
-    /**
-     * Return the column annotation for the square at the given index.
-     */
     function squareColumnAnnotation(index: number): string | null {
-        let { row, column } = getCoordsFromIndex(index);
+        let { row, col } = indexAsRowCol(index);
 
         if (row === 7) {
-            return String.fromCharCode(97 + column);
+            return String.fromCharCode(97 + col);
+        } else {
+            return null;
+        }
+    }
+
+    /**
+     * If an annotation should be displayed at the given square,
+     * returns the path to the icon that should be displayed.
+     */
+    function moveFeedbackAnnotationAtSquare(
+        boardState: BoardState,
+        timelineState: TimelineState,
+        annotations: TimelineAnnotations,
+        index: number
+    ): string | null {
+        if (!timelineState.position.main) {
+            return null;
+        }
+
+        let annotation = annotations.getAnnotationAt(timelineState.position.index);
+
+        if (annotation === null) {
+            return null;
+        }
+
+        if (boardState.move === null) {
+            return null;
+        }
+
+        console.log(squareToBoardIndex(boardState.move.to) === index);
+
+        if (squareToBoardIndex(boardState.move.to) === index) {
+            return pathForMoveFeedbackIcon(annotation.feedback);
         }
 
         return null;
     }
 
-    /**
-     * Returns the square at the given screen coordinates.
-     */
-    function getIndexAtScreenCoords(x: number, y: number) {
-        let { left, top } = squareContainerElt.getBoundingClientRect();
+    /* Elements */
+    let boardElement: HTMLDivElement;
 
-        let squareSize = squareContainerElt.clientWidth / 8;
+    /* State */
 
-        let squareX = Math.floor((x - left) / squareSize);
-        let squareY = Math.floor((y - top) / squareSize);
+    let shownLegalMoves: number[] = [];
+    let flipped = false;
 
-        if (flipped) {
-            squareX = 7 - squareX;
-            squareY = 7 - squareY;
+    let boardState: BoardState;
+    let annotations: TimelineAnnotations;
+    let timelineState: TimelineState;
+
+    let visualBoardIndices: number[] = [];
+    
+    $: visualBoardIndices = makeSquareIndexList(flipped);
+
+    let unsubBoard = chessInterface.stores.boardState.subscribe((state) => {
+        boardState = state;
+        shownLegalMoves = [];
+    });
+
+    let unsubAnnotations = chessInterface.stores.annotations.subscribe((data) => {
+        annotations = data;
+    });
+
+    let unsubTimelineState = chessInterface.stores.timelineState.subscribe((state) => {
+        timelineState = state;
+    });
+
+    function keydown(e: KeyboardEvent): void {
+        if (e.key === "ArrowLeft") {
+            chessInterface.previous();
+        } else if (e.key === "ArrowRight") {
+            chessInterface.next();
+        } else if (e.key === "ArrowUp") {
+            chessInterface.jumpToStart();
+        } else if (e.key === "ArrowDown") {
+            chessInterface.jumpToEnd();
         }
-        
-        return squareY * 8 + squareX;
     }
 
-    function makeEvalStatusText(sfEval: StockfishEval): string {
-        if (sfEval.continuations.length === 0) {
-            return "No evaluation";
-        }
+    window.addEventListener("keydown", keydown);
 
-        let score = sfEval.continuations[0].score;
+    onDestroy(() => {
+        unsubBoard();
+        unsubAnnotations();
+        unsubTimelineState();
 
-        if (score["CentipawnAdvantage"]) {
-            let cpa = score["CentipawnAdvantage"];
-            return `${cpa > 0 ? "+" : ""}${(cpa / 100).toFixed(2)}`;
-        } else if (score["Mate"]) {
-            if (score["Mate"] > 0) {
-                return `Mate in ${score["Mate"]}`;
-            } else {
-                return `Mate in ${-score["Mate"]}`;
-            }
-        }
-    }
-
-    let evalBarValue = 0.5;
-
-    let stockfish = new Stockfish();
-    let currentEval: StockfishEval | null = null;
-
-    stockfish.start_evaluation(fen);
-
-    setInterval(() => {
-        stockfish.get_evaluation().then((stockfishEval) => {
-            currentEval = stockfishEval;
-            let score = stockfishEval.continuations[0].score;
-
-            if (score["CentipawnAdvantage"]) {
-                let cpa = score["CentipawnAdvantage"];
-                let magnitude = cpa;
-                let offset = Math.sqrt(Math.abs(magnitude)) / 80;
-
-                evalBarValue = cpa > 0 ? 0.5 + offset : 0.5 - offset;
-            } else if (score["Mate"]) {
-                if (score["Mate"] > 0) {
-                    evalBarValue = 1;
-                } else {
-                    evalBarValue = 0;
-                }
-            }
-        });
-    }, 500);
+        window.removeEventListener("keydown", keydown);
+    });
 </script>
 
 <div class="main">
-    <span class="board-container">
-        <div class="board">
-            <div class="squares" bind:this={squareContainerElt}>
-                {#each visualBoardIndices as square}
-                    <div
-                        class="square"
-                        class:light={isLightSquare(square)}
-                        class:dark={!isLightSquare(square)}
-                        data-index={square}
-                    >
-                        {#if squareRowAnnotation(square)}
+    <div class="board" bind:this={boardElement}>
+        <div class="squares">
+            {#each visualBoardIndices as idx}
+                <div
+                    class="square"
+                    class:light={isLightSquare(idx)}
+                    class:dark={!isLightSquare(idx)}
+                    data-index={idx}
+                >
+                    <!-- Row and Column Annotations -->
+                    {#if squareRowAnnotation(idx)}
+                        <div
+                            class="square-annotation square-row-annotation"
+                            class:flipped
+                            class:normal={!flipped}
+                        >
+                            {squareRowAnnotation(idx)}
+                        </div>
+                    {/if}
+                    {#if squareColumnAnnotation(idx)}
+                        <div
+                            class="square-annotation square-column-annotation"
+                            class:flipped
+                            class:normal={!flipped}
+                        >
+                            {squareColumnAnnotation(idx)}
+                        </div>
+                    {/if}
+
+                    <!-- Legal Move Annotations -->
+                    {#if shownLegalMoves.includes(idx)}
+                        <div class="legal-move-overlay">
                             <div
-                                class="square-annotation square-row-annotation"
-                                class:flipped
-                                class:normal={!flipped}
-                            >
-                                {squareRowAnnotation(square)}
-                            </div>
-                        {/if}
-                        {#if squareColumnAnnotation(square)}
-                            <div
-                                class="square-annotation square-column-annotation"
-                                class:flipped
-                                class:normal={!flipped}
-                            >
-                                {squareColumnAnnotation(square)}
-                            </div>
-                        {/if}
-                        {#if shownLegalMoves.includes(square)}
-                            <div class="legal-move-overlay">
-                                <div
-                                    class="legal-move-overlay-circle"
-                                    class:capturing={board.getPieceAtIndex(square) !== null}
-                                />
-                            </div>
-                        {/if}
-                        <PieceComponent
-                            piece={board.getPieceAtIndex(square)}
-                            index={square}
-                            highlightLegalMoves={board.highlightLegalMoves.bind(board)}
-                            clearHighlightedLegalMoves={() => (shownLegalMoves = [])}
-                            requestMove={board.requestMove.bind(board)}
-                            canGrabPiece={() => {
-                                return board.getPieceAtIndex(square)?.color === board.getTurn();
-                            }}
-                            pieceExistsAt={(index) => board.getPieceAtIndex(index) !== null}
+                                class="legal-move-overlay-circle"
+                                class:capturing={boardState.getPieceAt(idx) !== null}
+                            />
+                        </div>
+                    {/if}
+
+                    <!-- Last Move Annotations -->
+                    {#if boardState.move && (boardState.move.from === boardIndexToSquare(idx) || boardState.move.to === boardIndexToSquare(idx))}
+                        <div class="last-move-overlay" />
+                    {/if}
+
+                    <!-- Piece -->
+                    <PieceComponent
+                        piece={boardState.pieces[idx]}
+                        index={idx}
+                        highlightLegalMoves={() => {
+                            boardElement.focus();
+                            shownLegalMoves = boardState.getLegalMovesFrom(idx);
+                        }}
+                        clearHighlightedLegalMoves={() => (shownLegalMoves = [])}
+                        requestMove={() => {}}
+                        canGrabPiece={() => {
+                            return boardState.getPieceAt(idx)?.color === boardState.getTurn();
+                        }}
+                        pieceExistsAt={(index) => boardState.getPieceAt(index) !== null}
+                    />
+
+                    <!-- Move Feedback Annotations -->
+                    {#if moveFeedbackAnnotationAtSquare(boardState, timelineState, annotations, idx)}
+                        <img
+                            src={moveFeedbackAnnotationAtSquare(boardState, timelineState, annotations, idx)}
+                            alt=""
+                            class="move-feedback-annotation"
                         />
-                    </div>
-                {/each}
-            </div>
-        </div>
-        <EvalBar value={evalBarValue} />
-    </span>
-    <div class="footer">
-        <span>
-            <button on:click={() => (flipped = !flipped)}>↺</button>
-        </span>
-        <span>
-            {#if currentEval}
-                <div class="sf-stats">
-                    {makeEvalStatusText(currentEval)}
+                    {/if}
                 </div>
-            {/if}
-        </span>
+            {/each}
+        </div>
     </div>
 </div>
 
 <style>
     .main {
         width: 100%;
-    }
-
-    .board-container {
-        display: grid;
-
-        grid-template-columns: 1fr 20px;
-    }
-
-    .footer {
-        display: flex;
-
-        justify-content: space-between;
-        align-items: center;
-
-        opacity: 0.8;
-    }
-
-    .sf-stats {
-        font-size: 0.8em;
-        opacity: 0.8;
-        text-align: right;
-
-        font-weight: bold;
     }
 
     .board {
@@ -385,11 +269,35 @@
         height: 80%;
     }
 
+    .last-move-overlay {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+
+        background-color: #ffd151ab;
+    }
+
+    .move-feedback-annotation {
+        position: absolute;
+        width: 5vh;
+        height: 5vh;
+
+        right: -0.5vh;
+
+        display: flex;
+        justify-content: center;
+        align-items: center;
+
+        z-index: 1;
+
+        filter: drop-shadow(0 4px 5px #00000081);
+    }
+
     .square-annotation {
         display: flex;
         justify-content: center;
         align-items: center;
-        font-size: 0.75rem;
+        font-size: 0.8rem;
         font-weight: bold;
         color: #3e150e51;
 

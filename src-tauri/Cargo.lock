@@ -275,6 +275,7 @@ name = "checkmate"
 version = "0.0.0"
 dependencies = [
  "chess",
+ "num_cpus",
  "regex",
  "serde",
  "serde_json",
